@@ -1,0 +1,2336 @@
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import {
+  Terminal,
+  Server,
+  Cpu,
+  HardDrive,
+  Activity,
+  AlertTriangle,
+  Play,
+  Square,
+  RefreshCw,
+  Zap,
+  Database,
+  Layers,
+  Monitor,
+  Lock,
+  Unlock,
+  ChevronRight,
+  Clock,
+  CheckCircle2,
+  XCircle,
+  Sparkles,
+  Sliders,
+  Eye,
+  EyeOff,
+  Trash2,
+  FastForward
+} from 'lucide-react';
+
+// ============================================================================
+// CONSTANTS & GAME DATA DEFINITIONS (z/OS ARCHITECTURE)
+// ============================================================================
+
+const HARDWARE_GENERATIONS = [
+  { id: 0, name: 'IBM zEnterprise z12', short: 'z12', mult: 1, baseRam: 16, baseCpuReduction: 0, reqMips: 0 },
+  { id: 1, name: 'IBM z13 Mainframe', short: 'z13', mult: 3.5, baseRam: 32, baseCpuReduction: 5, reqMips: 25000 },
+  { id: 2, name: 'IBM z14 ZR1', short: 'z14', mult: 12, baseRam: 64, baseCpuReduction: 10, reqMips: 250000 },
+  { id: 3, name: 'IBM z15 T01', short: 'z15', mult: 45, baseRam: 128, baseCpuReduction: 15, reqMips: 5000000 },
+  { id: 4, name: 'IBM Telum z16', short: 'z16', mult: 200, baseRam: 256, baseCpuReduction: 20, reqMips: 150000000 },
+  { id: 5, name: 'IBM Quantum zSystem', short: 'zQ', mult: 1000, baseRam: 512, baseCpuReduction: 30, reqMips: 5000000000 },
+];
+
+const INITIAL_WINDOWS = {
+  tso: {
+    id: 'tso',
+    asid: '0001',
+    title: 'TSO/E CONSOLE - ZADMIN01',
+    shortTitle: 'TSO CONSOLE',
+    unlocked: true,
+    isOpen: true,
+    alwaysOpen: true,
+    unlockCost: 0,
+    cpuUpkeep: 5,
+    ramUpkeep: 2,
+    theme: 'green', // 'green' | 'cyan' | 'amber'
+  },
+  sdsf: {
+    id: 'sdsf',
+    asid: '002A',
+    title: 'SDSF DA - ACTIVE JOBS & INITIATORS',
+    shortTitle: 'SDSF DA (JOBS)',
+    unlocked: false,
+    isOpen: false,
+    alwaysOpen: false,
+    unlockCost: 35,
+    cpuUpkeep: 10,
+    ramUpkeep: 4,
+    theme: 'cyan',
+  },
+  jes2: {
+    id: 'jes2',
+    asid: '003F',
+    title: 'JES2 SPOOL & PRINTER PR1',
+    shortTitle: 'JES2 / PR1',
+    unlocked: false,
+    isOpen: false,
+    alwaysOpen: false,
+    unlockCost: 120,
+    cpuUpkeep: 8,
+    ramUpkeep: 2,
+    theme: 'amber',
+  },
+  cics: {
+    id: 'cics',
+    asid: '005C',
+    title: 'CICS TS REGIONS & DB2 SUBSYSTEMS',
+    shortTitle: 'CICS / DB2',
+    unlocked: false,
+    isOpen: false,
+    alwaysOpen: false,
+    unlockCost: 750,
+    cpuUpkeep: 12,
+    ramUpkeep: 6,
+    theme: 'green',
+  },
+  hardware: {
+    id: 'hardware',
+    asid: '008E',
+    title: 'HCD HARDWARE & DASD 3390 STORAGE',
+    shortTitle: 'DASD & RAM',
+    unlocked: false,
+    isOpen: false,
+    alwaysOpen: false,
+    unlockCost: 2200,
+    cpuUpkeep: 8,
+    ramUpkeep: 2,
+    theme: 'cyan',
+  },
+  sysview: {
+    id: 'sysview',
+    asid: '00FA',
+    title: 'SYSVIEW MONITOR & SYSTEM IPL',
+    shortTitle: 'SYSVIEW / IPL',
+    unlocked: false,
+    isOpen: false,
+    alwaysOpen: false,
+    unlockCost: 10000,
+    cpuUpkeep: 15,
+    ramUpkeep: 8,
+    theme: 'amber',
+  },
+};
+
+const INITIAL_JCL_JOBS = [
+  {
+    id: 'batch01',
+    jobName: 'BATCH01',
+    stepName: 'COB2RUN',
+    owner: 'ZADMIN01',
+    desc: 'COBOL Payroll Batch Processing',
+    level: 1,
+    baseCost: 15,
+    costMult: 1.18,
+    baseMips: 2.5,
+  },
+  {
+    id: 'sort02',
+    jobName: 'DFSORT02',
+    stepName: 'SORTMERG',
+    owner: 'SYSOPR',
+    desc: 'DFSORT High-Volume VSAM Merge',
+    level: 0,
+    baseCost: 100,
+    costMult: 1.2,
+    baseMips: 14,
+  },
+  {
+    id: 'db2unld',
+    jobName: 'DB2UNLD',
+    stepName: 'DSNUTILB',
+    owner: 'DB2ADM',
+    desc: 'DB2 Nightly Tablespace Unload',
+    level: 0,
+    baseCost: 650,
+    costMult: 1.22,
+    baseMips: 75,
+  },
+  {
+    id: 'imsbkup',
+    jobName: 'IMSBKUP',
+    stepName: 'DFSRRC00',
+    owner: 'IMSPROD',
+    desc: 'IMS Hierarchical Database Image Copy',
+    level: 0,
+    baseCost: 4200,
+    costMult: 1.25,
+    baseMips: 420,
+  },
+];
+
+const INITIAL_SUBSYSTEMS = [
+  {
+    id: 'cicsprod',
+    name: 'CICSPROD',
+    proc: 'DFHSIP',
+    type: 'CICS TS 5.6',
+    desc: 'High-Frequency Online Banking Transactions',
+    level: 0,
+    baseCost: 1000,
+    costMult: 1.22,
+    baseMips: 110,
+    txPerLevel: 450,
+  },
+  {
+    id: 'db2mstr',
+    name: 'DB2MSTR',
+    proc: 'DSNYASCP',
+    type: 'DB2 13 z/OS',
+    desc: 'Relational Database Buffer Pool Engine',
+    level: 0,
+    baseCost: 6500,
+    costMult: 1.25,
+    baseMips: 680,
+    txPerLevel: 1200,
+  },
+  {
+    id: 'mqseries',
+    name: 'MQMSTR',
+    proc: 'CSQ9MSTR',
+    type: 'IBM MQ z/OS',
+    desc: 'Enterprise Cross-LPAR Message Queueing',
+    level: 0,
+    baseCost: 38000,
+    costMult: 1.28,
+    baseMips: 3900,
+    txPerLevel: 5400,
+  },
+  {
+    id: 'zosmf',
+    name: 'IZUSVR1',
+    proc: 'IZUPRM',
+    type: 'z/OSMF REST',
+    desc: 'Modernized WebSphere Liberty API Gateway',
+    level: 0,
+    baseCost: 250000,
+    costMult: 1.3,
+    baseMips: 24000,
+    txPerLevel: 18000,
+  },
+];
+
+const DASD_MODELS = [
+  { level: 0, name: '3390 Mod 1', cylinders: 1113, maxOfflineSec: 1800, spoolDrainReduction: 1.0, cost: 0 },
+  { level: 1, name: '3390 Mod 3', cylinders: 3339, maxOfflineSec: 7200, spoolDrainReduction: 0.8, cost: 1500 },
+  { level: 2, name: '3390 Mod 9', cylinders: 10017, maxOfflineSec: 21600, spoolDrainReduction: 0.6, cost: 12000 },
+  { level: 3, name: '3390 Mod 27', cylinders: 32760, maxOfflineSec: 43200, spoolDrainReduction: 0.4, cost: 95000 },
+  { level: 4, name: '3390 Mod 54', cylinders: 65520, maxOfflineSec: 86400, spoolDrainReduction: 0.25, cost: 850000 },
+];
+
+// ============================================================================
+// UTILITY FUNCTIONS (NUMBER FORMATTING & COLORS)
+// ============================================================================
+
+const formatNumber = (num, decimals = 1) => {
+  if (num === null || num === undefined || isNaN(num)) return '0';
+  if (num < 0) return '-' + formatNumber(-num, decimals);
+  if (num < 1000) return num.toFixed(num < 10 && decimals > 0 ? decimals : 0);
+  const suffixes = ['', 'K', 'M', 'B', 'T', 'Qa', 'Qi', 'Sx', 'Sp', 'Oc', 'No', 'Dc'];
+  const tier = Math.floor(Math.log10(Math.abs(num)) / 3);
+  if (tier === 0) return num.toFixed(0);
+  if (tier >= suffixes.length) return num.toExponential(2);
+  const scale = Math.pow(10, tier * 3);
+  const scaled = num / scale;
+  return scaled.toFixed(decimals) + suffixes[tier];
+};
+
+const getThemeClasses = (theme) => {
+  switch (theme) {
+    case 'cyan':
+      return {
+        text: 'text-[#00e5ff]',
+        dimText: 'text-[#00e5ff]/60',
+        border: 'border-[#00e5ff]/30',
+        bgHighlight: 'bg-[#00e5ff]/10',
+        button: 'border-[#00e5ff]/50 text-[#00e5ff] hover:bg-[#00e5ff]/20',
+        badge: 'bg-[#00e5ff]/20 text-[#00e5ff]',
+        hex: '#00e5ff',
+      };
+    case 'amber':
+      return {
+        text: 'text-[#ffb000]',
+        dimText: 'text-[#ffb000]/60',
+        border: 'border-[#ffb000]/30',
+        bgHighlight: 'bg-[#ffb000]/10',
+        button: 'border-[#ffb000]/50 text-[#ffb000] hover:bg-[#ffb000]/20',
+        badge: 'bg-[#ffb000]/20 text-[#ffb000]',
+        hex: '#ffb000',
+      };
+    case 'green':
+    default:
+      return {
+        text: 'text-[#33ff33]',
+        dimText: 'text-[#33ff33]/60',
+        border: 'border-[#33ff33]/30',
+        bgHighlight: 'bg-[#33ff33]/10',
+        button: 'border-[#33ff33]/50 text-[#33ff33] hover:bg-[#33ff33]/20',
+        badge: 'bg-[#33ff33]/20 text-[#33ff33]',
+        hex: '#33ff33',
+      };
+  }
+};
+
+// ============================================================================
+// MAIN APPLICATION COMPONENT
+// ============================================================================
+
+export default function App() {
+  // --- CORE RESOURCES & STATE ---
+  const [mips, setMips] = useState(25);
+  const [totalMipsEarned, setTotalMipsEarned] = useState(25);
+  const [hwGenIndex, setHwGenIndex] = useState(0);
+  const [archTokens, setArchTokens] = useState(0);
+  const [iplCount, setIplCount] = useState(0);
+
+  // --- WINDOWS & UI STATE ---
+  const [windows, setWindows] = useState(INITIAL_WINDOWS);
+  const [scanlines, setScanlines] = useState(true);
+  const [showBootModal, setShowBootModal] = useState(false);
+  const [bootStep, setBootStep] = useState(0);
+  const [confirmIplModal, setConfirmIplModal] = useState(false);
+  const [confirmResetModal, setConfirmResetModal] = useState(false);
+  const [offlineReport, setOfflineReport] = useState(null);
+
+  // --- JCL & INITIATORS STATE ---
+  const [jclJobs, setJclJobs] = useState(INITIAL_JCL_JOBS);
+  const [ownedInitiators, setOwnedInitiators] = useState(1);
+  const [activeInitiators, setActiveInitiators] = useState(1);
+  const [ziipEngines, setZiipEngines] = useState(0);
+
+  // --- JES2 SPOOL & PRINTER PR1 STATE ---
+  // 'IDLE' | 'PRINTING' | 'JAMMED' | 'CANCELLED'
+  const [pr1State, setPr1State] = useState('IDLE');
+  const [spoolUsage, setSpoolUsage] = useState(12.0); // 0 to 100%
+  const [paperQualityLevel, setPaperQualityLevel] = useState(0);
+  const [rexxAutoOp, setRexxAutoOp] = useState(false);
+
+  // --- CICS / DB2 SUBSYSTEMS STATE ---
+  const [subsystems, setSubsystems] = useState(INITIAL_SUBSYSTEMS);
+
+  // --- HARDWARE & DASD UPGRADES STATE ---
+  const [ramUpgradeLevel, setRamUpgradeLevel] = useState(0);
+  const [coolingLevel, setCoolingLevel] = useState(0);
+  const [dasdLevel, setDasdLevel] = useState(0);
+  const [clickUpgradeLevel, setClickUpgradeLevel] = useState(0);
+
+  // --- ACTIVE CONSOLE BUFFS ---
+  const [purgeBuffTimer, setPurgeBuffTimer] = useState(0); // $P buff (+100% MIPS)
+  const [purgeCooldown, setPurgeCooldown] = useState(0);
+  const [daBuffTimer, setDaBuffTimer] = useState(0); // D A,L buff (+50% MIPS)
+
+  // --- TERMINAL LOGS & INPUT ---
+  const [logs, setLogs] = useState([
+    { id: 1, time: '08:00:01', code: 'IEE114I', text: 'ZOS1 INITIALIZATION COMPLETE - LPAR ONLINE', type: 'info' },
+    { id: 2, time: '08:00:02', code: '$HASP000', text: 'JES2 SPOOL READY. 1 INITIATOR ACTIVE.', type: 'normal' },
+    { id: 3, time: '08:00:03', code: 'IKJ56700A', text: 'ENTER COMMAND OR TYPE "HELP" FOR TSO OPERATIONS.', type: 'highlight' },
+  ]);
+  const [cmdInput, setCmdInput] = useState('');
+  const [cmdHistory, setCmdHistory] = useState([]);
+  const [historyIdx, setHistoryIdx] = useState(-1);
+  const [floatingClicks, setFloatingClicks] = useState([]);
+
+  // --- TELEMETRY HISTORY FOR SYSVIEW ---
+  const [mipsHistory, setMipsHistory] = useState(Array(20).fill(0));
+
+  const terminalEndRef = useRef(null);
+
+  // Helper to append log line
+  const addLog = (code, text, type = 'normal') => {
+    const now = new Date();
+    const timeStr = now.toTimeString().split(' ')[0];
+    setLogs((prev) => [
+      ...prev.slice(-65),
+      { id: Date.now() + Math.random(), time: timeStr, code, text, type },
+    ]);
+  };
+
+  // ============================================================================
+  // SAVE / LOAD SYSTEM (LOCALSTORAGE)
+  // ============================================================================
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('zos_incremental_save_v1');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.mips !== undefined) setMips(parsed.mips);
+        if (parsed.totalMipsEarned !== undefined) setTotalMipsEarned(parsed.totalMipsEarned);
+        if (parsed.hwGenIndex !== undefined) setHwGenIndex(parsed.hwGenIndex);
+        if (parsed.archTokens !== undefined) setArchTokens(parsed.archTokens);
+        if (parsed.iplCount !== undefined) setIplCount(parsed.iplCount);
+        if (parsed.windows) setWindows((prev) => ({ ...prev, ...parsed.windows }));
+        if (parsed.jclJobs) setJclJobs(parsed.jclJobs);
+        if (parsed.ownedInitiators !== undefined) setOwnedInitiators(parsed.ownedInitiators);
+        if (parsed.activeInitiators !== undefined) setActiveInitiators(parsed.activeInitiators);
+        if (parsed.ziipEngines !== undefined) setZiipEngines(parsed.ziipEngines);
+        if (parsed.subsystems) setSubsystems(parsed.subsystems);
+        if (parsed.ramUpgradeLevel !== undefined) setRamUpgradeLevel(parsed.ramUpgradeLevel);
+        if (parsed.coolingLevel !== undefined) setCoolingLevel(parsed.coolingLevel);
+        if (parsed.dasdLevel !== undefined) setDasdLevel(parsed.dasdLevel);
+        if (parsed.clickUpgradeLevel !== undefined) setClickUpgradeLevel(parsed.clickUpgradeLevel);
+        if (parsed.paperQualityLevel !== undefined) setPaperQualityLevel(parsed.paperQualityLevel);
+        if (parsed.rexxAutoOp !== undefined) setRexxAutoOp(parsed.rexxAutoOp);
+      } else {
+        // First time playing: show quick boot sequence
+        setShowBootModal(true);
+      }
+    } catch (err) {
+      console.error('Failed to load save:', err);
+    }
+  }, []);
+
+  // Auto-save every 5 seconds
+  useEffect(() => {
+    const saveTimer = setInterval(() => {
+      try {
+        const payload = {
+          mips,
+          totalMipsEarned,
+          hwGenIndex,
+          archTokens,
+          iplCount,
+          windows,
+          jclJobs,
+          ownedInitiators,
+          activeInitiators,
+          ziipEngines,
+          subsystems,
+          ramUpgradeLevel,
+          coolingLevel,
+          dasdLevel,
+          clickUpgradeLevel,
+          paperQualityLevel,
+          rexxAutoOp,
+          lastSave: Date.now(),
+        };
+        localStorage.setItem('zos_incremental_save_v1', JSON.stringify(payload));
+      } catch (e) {
+        // Ignore storage quota errors
+      }
+    }, 5000);
+    return () => clearInterval(saveTimer);
+  }, [
+    mips,
+    totalMipsEarned,
+    hwGenIndex,
+    archTokens,
+    iplCount,
+    windows,
+    jclJobs,
+    ownedInitiators,
+    activeInitiators,
+    ziipEngines,
+    subsystems,
+    ramUpgradeLevel,
+    coolingLevel,
+    dasdLevel,
+    clickUpgradeLevel,
+    paperQualityLevel,
+    rexxAutoOp,
+  ]);
+
+  // Boot modal animation effect
+  useEffect(() => {
+    if (!showBootModal) return;
+    setBootStep(0);
+    const interval = setInterval(() => {
+      setBootStep((prev) => {
+        if (prev >= 6) {
+          clearInterval(interval);
+          return 6;
+        }
+        return prev + 1;
+      });
+    }, 450);
+    return () => clearInterval(interval);
+  }, [showBootModal]);
+
+  // Auto-scroll terminal log
+  useEffect(() => {
+    if (terminalEndRef.current) {
+      terminalEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [logs]);
+
+  // ============================================================================
+  // DERIVED METRICS & SYSTEM CALCULATIONS
+  // ============================================================================
+
+  const currentHw = HARDWARE_GENERATIONS[hwGenIndex] || HARDWARE_GENERATIONS[0];
+  const currentDasd = DASD_MODELS[dasdLevel] || DASD_MODELS[0];
+
+  // Total RAM Available vs Used
+  const totalRamGb = currentHw.baseRam + ramUpgradeLevel * 16;
+  const usedRamGb = useMemo(() => {
+    let used = 0;
+    Object.values(windows).forEach((w) => {
+      if (w.isOpen) used += w.ramUpkeep;
+    });
+    subsystems.forEach((sub) => {
+      if (sub.level > 0) used += 2;
+    });
+    return used;
+  }, [windows, subsystems]);
+
+  // CPU Load Breakdown (%)
+  const cpuBreakdown = useMemo(() => {
+    const coolingDiscount = Math.min(0.45, coolingLevel * 0.05 + currentHw.baseCpuReduction / 100);
+    let winCpu = 0;
+    Object.values(windows).forEach((w) => {
+      if (w.isOpen) winCpu += w.cpuUpkeep;
+    });
+    const initCpu = activeInitiators * 8;
+    const subCpu = subsystems.reduce((acc, s) => acc + (s.level > 0 ? 4 : 0), 0);
+
+    const rawTotal = winCpu + initCpu + subCpu;
+    const effectiveTotal = Math.max(5, Math.round(rawTotal * (1 - coolingDiscount)));
+
+    return {
+      windows: Math.round(winCpu * (1 - coolingDiscount)),
+      initiators: Math.round(initCpu * (1 - coolingDiscount)),
+      subsystems: Math.round(subCpu * (1 - coolingDiscount)),
+      total: effectiveTotal,
+    };
+  }, [windows, activeInitiators, subsystems, coolingLevel, currentHw]);
+
+  const isThrashing = cpuBreakdown.total > 100;
+  const isSpoolFull = spoolUsage >= 99.5;
+  const totalParallelSlots = activeInitiators + ziipEngines;
+
+  // Production Calculations (MIPS/sec)
+  const productionStats = useMemo(() => {
+    // 1. JCL Batch Production (Limited by active Initiator + zIIP slots!)
+    // Sort purchased JCLs by highest output so Initiators run the most profitable jobs first
+    const purchasedJobTypes = jclJobs
+      .filter((j) => j.level > 0)
+      .map((j) => ({
+        ...j,
+        mipsOutput: j.level * j.baseMips,
+      }))
+      .sort((a, b) => b.mipsOutput - a.mipsOutput);
+
+    let batchMips = 0;
+    let slotsUsed = 0;
+    for (let i = 0; i < purchasedJobTypes.length; i++) {
+      if (slotsUsed < totalParallelSlots) {
+        batchMips += purchasedJobTypes[i].mipsOutput;
+        slotsUsed++;
+      }
+    }
+
+    // If the player has extra initiator slots beyond the 4 job families, each extra slot gives a +15% parallel boost to batch
+    const extraSlots = Math.max(0, totalParallelSlots - purchasedJobTypes.length);
+    if (extraSlots > 0) {
+      batchMips *= 1 + extraSlots * 0.18;
+    }
+
+    // 2. CICS & DB2 Subsystems Production
+    const subMips = subsystems.reduce((acc, sub) => acc + sub.level * sub.baseMips, 0);
+
+    // 3. Global Multipliers
+    let multiplier = currentHw.mult;
+    // Architecture Tokens give +25% each
+    multiplier *= 1 + archTokens * 0.25;
+
+    // Console Buffs
+    if (purgeBuffTimer > 0) multiplier *= 2.0; // +100% from $P
+    if (daBuffTimer > 0) multiplier *= 1.5; // +50% from D A,L
+
+    // Printer PR1 State Multiplier
+    if (pr1State === 'PRINTING') {
+      multiplier *= 3.5; // +250% massive buff!
+    } else if (pr1State === 'JAMMED') {
+      multiplier *= 0.7; // -30% penalty from paper jam
+    }
+
+    // Spool Full Penalty (Abend x37)
+    if (isSpoolFull) {
+      multiplier *= 0.5;
+    }
+
+    // CPU Thrashing Penalty (>100% CPU)
+    if (isThrashing) {
+      multiplier *= 0.5;
+    }
+
+    const totalMipsPerSec = (batchMips + subMips) * multiplier;
+    const clickPower = (2 + clickUpgradeLevel * 4 + totalMipsPerSec * 0.08) * currentHw.mult;
+
+    return {
+      batchMips: batchMips * multiplier,
+      subMips: subMips * multiplier,
+      totalMipsPerSec,
+      clickPower,
+      slotsUsed,
+      multiplier,
+    };
+  }, [
+    jclJobs,
+    totalParallelSlots,
+    subsystems,
+    currentHw,
+    archTokens,
+    purgeBuffTimer,
+    daBuffTimer,
+    pr1State,
+    isSpoolFull,
+    isThrashing,
+    clickUpgradeLevel,
+  ]);
+
+  // Jam probability per second when PR1 is printing
+  const pr1JamChancePerSec = Math.max(1.5, 7.5 - paperQualityLevel * 1.2);
+
+  // ============================================================================
+  // MAIN GAME ENGINE LOOP (10 TICKS PER SECOND)
+  // ============================================================================
+
+  useEffect(() => {
+    const tickRateMs = 100; // 10 Hz
+    const dt = tickRateMs / 1000;
+
+    const interval = setInterval(() => {
+      // 1. Add MIPS
+      const gained = productionStats.totalMipsPerSec * dt;
+      if (gained > 0) {
+        setMips((prev) => prev + gained);
+        setTotalMipsEarned((prev) => prev + gained);
+      }
+
+      // 2. Update Buff Timers & Cooldowns
+      setPurgeBuffTimer((prev) => Math.max(0, prev - dt));
+      setPurgeCooldown((prev) => Math.max(0, prev - dt));
+      setDaBuffTimer((prev) => Math.max(0, prev - dt));
+
+      // 3. JES2 Spool Accumulation & Printer PR1 State Machine
+      setSpoolUsage((prevSpool) => {
+        let deltaSpool = 0.25 * currentDasd.spoolDrainReduction * dt;
+        if (pr1State === 'PRINTING') {
+          deltaSpool = 0.65 * currentDasd.spoolDrainReduction * dt;
+        } else if (pr1State === 'JAMMED') {
+          deltaSpool = 2.4 * currentDasd.spoolDrainReduction * dt;
+        }
+        return Math.min(100, Math.max(0, prevSpool + deltaSpool));
+      });
+
+      // Check for random Paper Jam on PR1
+      if (pr1State === 'PRINTING') {
+        const roll = Math.random() * 100;
+        if (roll < pr1JamChancePerSec * dt) {
+          setPr1State('JAMMED');
+          addLog(
+            '*HASP190',
+            'PR1 INTERVENTION REQUIRED - PAPER JAM! ENTER "C PR1" THEN "S PR1"',
+            'error'
+          );
+        }
+      } else if (pr1State === 'JAMMED' && rexxAutoOp) {
+        // If player bought REXX Auto-Operator, 25% chance each second to auto-recover
+        if (Math.random() < 0.25 * dt) {
+          setPr1State('PRINTING');
+          addLog('REXX01I', 'NETVIEW AUTO-OP EXECUTED "$C PR1; $S PR1" - PR1 RESTORED', 'info');
+        }
+      }
+    }, tickRateMs);
+
+    return () => clearInterval(interval);
+  }, [productionStats.totalMipsPerSec, currentDasd, pr1State, pr1JamChancePerSec, rexxAutoOp]);
+
+  // Separate 1-second sampler for SYSVIEW graph
+  useEffect(() => {
+    const graphTimer = setInterval(() => {
+      setMipsHistory((prev) => [...prev.slice(1), productionStats.totalMipsPerSec]);
+    }, 1000);
+    return () => clearInterval(graphTimer);
+  }, [productionStats.totalMipsPerSec]);
+
+  // ============================================================================
+  // CORE ACTIONS & TERMINAL COMMAND PARSER
+  // ============================================================================
+
+  const handleManualSubmit = (e) => {
+    const gained = productionStats.clickPower;
+    setMips((prev) => prev + gained);
+    setTotalMipsEarned((prev) => prev + gained);
+
+    // Floating number feedback
+    if (e && e.clientX) {
+      const id = Date.now() + Math.random();
+      setFloatingClicks((prev) => [
+        ...prev.slice(-8),
+        { id, x: e.clientX, y: e.clientY, val: `+${formatNumber(gained)} MIPS` },
+      ]);
+      setTimeout(() => {
+        setFloatingClicks((prev) => prev.filter((item) => item.id !== id));
+      }, 850);
+    }
+  };
+
+  const executeCommand = (rawString) => {
+    const clean = rawString.trim().toUpperCase();
+    if (!clean) return;
+
+    setCmdHistory((prev) => [clean, ...prev.slice(0, 19)]);
+    setHistoryIdx(-1);
+    setCmdInput('');
+
+    addLog('TSO', `> ${clean}`, 'cmd');
+
+    // Command parsing
+    if (clean === 'SUBMIT' || clean === 'SUB' || clean.startsWith('SUBMIT ')) {
+      const gained = productionStats.clickPower * 1.25;
+      setMips((prev) => prev + gained);
+      setTotalMipsEarned((prev) => prev + gained);
+      const jobNum = Math.floor(10000 + Math.random() * 89999);
+      addLog(
+        'IKJ56250I',
+        `JOB BATCH01(JOB${jobNum}) SUBMITTED. +${formatNumber(gained)} MIPS`,
+        'info'
+      );
+      return;
+    }
+
+    if (clean === '$P' || clean === 'P SPOOL' || clean === '$P SPOOL') {
+      if (purgeCooldown > 0) {
+        addLog(
+          '$HASP649',
+          `PURGE COMMAND ON COOLDOWN (${purgeCooldown.toFixed(0)}s REMAINING)`,
+          'warn'
+        );
+        return;
+      }
+      setSpoolUsage(0);
+      setPurgeBuffTimer(20);
+      setPurgeCooldown(35);
+      addLog(
+        '$HASP890',
+        'JES2 SPOOL PURGED TO 0%. +100% MIPS OVERCLOCK FOR 20 SECONDS!',
+        'highlight'
+      );
+      return;
+    }
+
+    if (clean === 'D A,L' || clean === 'D MIPS' || clean === 'DA') {
+      setDaBuffTimer(15);
+      addLog(
+        'IEE115I',
+        `SYS=ZOS1 MIPS/S=${formatNumber(productionStats.totalMipsPerSec)} CPU=${cpuBreakdown.total}% RAM=${usedRamGb}/${totalRamGb}GB`,
+        'info'
+      );
+      addLog('WLM001I', 'TELEMETRY CALIBRATED: +50% MIPS PRODUCTION FOR 15s', 'highlight');
+      return;
+    }
+
+    if (clean === 'C PR1' || clean === '$C PR1' || clean === 'C PR1,I') {
+      if (pr1State === 'JAMMED' || pr1State === 'PRINTING') {
+        setPr1State('CANCELLED');
+        addLog('$HASP000', 'PR1 DRAINED AND CANCELLED. READY FOR "$S PR1" TO RESTART.', 'warn');
+      } else {
+        addLog('$HASP000', `PR1 IS ALREADY ${pr1State}. TYPE "S PR1" TO START.`, 'normal');
+      }
+      return;
+    }
+
+    if (clean === 'S PR1' || clean === '$S PR1') {
+      if (pr1State === 'JAMMED') {
+        addLog(
+          '*HASP190',
+          'CANNOT START PR1 WHILE JAMMED! YOU MUST CANCEL FIRST WITH "C PR1"',
+          'error'
+        );
+        return;
+      }
+      setPr1State('PRINTING');
+      addLog(
+        '$HASP100',
+        'PR1 STARTED ON CLASS=A. HIGH-SPEED BATCH OUTPUT ACTIVE (x3.5 MIPS/s)!',
+        'highlight'
+      );
+      return;
+    }
+
+    if (clean === 'C U=ALL' || clean === 'K E,D') {
+      setWindows((prev) => {
+        const next = { ...prev };
+        Object.keys(next).forEach((k) => {
+          if (!next[k].alwaysOpen) next[k] = { ...next[k], isOpen: false };
+        });
+        return next;
+      });
+      addLog(
+        'IEE301I',
+        'ALL SECONDARY ASID SESSIONS TERMINATED. CPU LOAD RESTORED TO NOMINAL.',
+        'warn'
+      );
+      return;
+    }
+
+    if (clean === 'HELP' || clean === '?') {
+      addLog('HELP01I', '--- z/OS MASTER CONSOLE COMMAND REFERENCE ---', 'highlight');
+      addLog('HELP02I', 'SUBMIT   : Submit JCL Batch Job manually (+MIPS)', 'normal');
+      addLog('HELP03I', '$P       : Purge JES2 Spool & gain +100% MIPS for 20s', 'normal');
+      addLog('HELP04I', 'D A,L    : Display Active System & gain +50% MIPS for 15s', 'normal');
+      addLog('HELP05I', 'S PR1    : Start Printer PR1 (x3.5 MIPS/s Risk/Reward Buff)', 'normal');
+      addLog('HELP06I', 'C PR1    : Cancel jammed Printer PR1 (Step 1 of recovery)', 'normal');
+      addLog('HELP07I', 'C U=ALL  : Emergency close all extra windows to stop Thrashing', 'normal');
+      return;
+    }
+
+    addLog('IKJ56500I', `COMMAND "${clean}" NOT FOUND. TYPE "HELP" FOR SYNTAX.`, 'error');
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      executeCommand(cmdInput);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (cmdHistory.length > 0 && historyIdx < cmdHistory.length - 1) {
+        const nextIdx = historyIdx + 1;
+        setHistoryIdx(nextIdx);
+        setCmdInput(cmdHistory[nextIdx]);
+      }
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (historyIdx > 0) {
+        const nextIdx = historyIdx - 1;
+        setHistoryIdx(nextIdx);
+        setCmdInput(cmdHistory[nextIdx]);
+      } else if (historyIdx === 0) {
+        setHistoryIdx(-1);
+        setCmdInput('');
+      }
+    }
+  };
+
+  // ============================================================================
+  // WINDOW MANAGER & SHOP ACTIONS
+  // ============================================================================
+
+  const unlockWindow = (winId) => {
+    const win = windows[winId];
+    if (!win || win.unlocked || mips < win.unlockCost) return;
+    setMips((prev) => prev - win.unlockCost);
+    const fitsRam = usedRamGb + win.ramUpkeep <= totalRamGb;
+    setWindows((prev) => ({
+      ...prev,
+      [winId]: { ...prev[winId], unlocked: true, isOpen: fitsRam },
+    }));
+    addLog(
+      'IEF403I',
+      `ASID ${win.asid} (${win.shortTitle}) LICENSE ACTIVATED.${fitsRam ? ' SESSION STARTED.' : ' INSUFFICIENT RAM TO AUTO-OPEN.'}`,
+      'highlight'
+    );
+  };
+
+  const toggleWindow = (winId) => {
+    const win = windows[winId];
+    if (!win || !win.unlocked || win.alwaysOpen) return;
+
+    if (!win.isOpen && usedRamGb + win.ramUpkeep > totalRamGb) {
+      addLog(
+        'IRA200E',
+        `AUXILIARY STORAGE SHORTAGE: NEED ${win.ramUpkeep}GB FREE RAM FOR ${win.shortTitle}!`,
+        'error'
+      );
+      return;
+    }
+
+    setWindows((prev) => ({
+      ...prev,
+      [winId]: { ...prev[winId], isOpen: !prev[winId].isOpen },
+    }));
+  };
+
+  const cycleWindowTheme = (winId) => {
+    const order = ['green', 'cyan', 'amber'];
+    setWindows((prev) => {
+      const current = prev[winId].theme || 'green';
+      const nextTheme = order[(order.indexOf(current) + 1) % order.length];
+      return {
+        ...prev,
+        [winId]: { ...prev[winId], theme: nextTheme },
+      };
+    });
+  };
+
+  // Buy JCL Upgrade
+  const buyJclUpgrade = (jobId) => {
+    setJclJobs((prev) =>
+      prev.map((j) => {
+        if (j.id !== jobId) return j;
+        const cost = Math.floor(j.baseCost * Math.pow(j.costMult, j.level));
+        if (mips < cost) return j;
+        setMips((m) => m - cost);
+        return { ...j, level: j.level + 1 };
+      })
+    );
+  };
+
+  // Buy Standard JES2 Initiator
+  const initiatorCost = Math.floor(75 * Math.pow(2.1, ownedInitiators - 1));
+  const buyInitiator = () => {
+    if (mips < initiatorCost) return;
+    setMips((prev) => prev - initiatorCost);
+    setOwnedInitiators((prev) => prev + 1);
+    setActiveInitiators((prev) => prev + 1);
+    addLog('$HASP100', `JES2 INITIATOR INIT${ownedInitiators + 1} ALLOCATED (+8% CPU UPKEEP)`, 'info');
+  };
+
+  // Buy zIIP Processor (0% Main CPU Upkeep)
+  const ziipMipsCost = Math.floor(1800 * Math.pow(3.2, ziipEngines));
+  const buyZiipWithMips = () => {
+    if (mips < ziipMipsCost) return;
+    setMips((prev) => prev - ziipMipsCost);
+    setZiipEngines((prev) => prev + 1);
+    addLog('IEA001I', `zIIP SPECIALTY ENGINE ONLINE! +1 PARALLEL SLOT AT 0% MAIN CPU COST.`, 'highlight');
+  };
+
+  // Buy CICS / DB2 Subsystem
+  const buySubsystem = (subId) => {
+    setSubsystems((prev) =>
+      prev.map((s) => {
+        if (s.id !== subId) return s;
+        const cost = Math.floor(s.baseCost * Math.pow(s.costMult, s.level));
+        if (mips < cost) return s;
+        setMips((m) => m - cost);
+        return { ...s, level: s.level + 1 };
+      })
+    );
+  };
+
+  // Simulate Offline Progress (DASD Storage Test)
+  const simulateOffline = (seconds = 3600) => {
+    const cappedSec = Math.min(seconds, currentDasd.maxOfflineSec);
+    const abend = seconds > currentDasd.maxOfflineSec;
+    const rate = Math.max(5, productionStats.totalMipsPerSec * 0.75);
+    const earned = rate * cappedSec;
+    setMips((prev) => prev + earned);
+    setTotalMipsEarned((prev) => prev + earned);
+    setOfflineReport({
+      requestedSec: seconds,
+      cappedSec,
+      abend,
+      earned,
+      dasdName: currentDasd.name,
+    });
+    if (abend) {
+      addLog(
+        'IEC030I',
+        `B37-04 ABEND: DASD ${currentDasd.name} FILLED AFTER ${(cappedSec / 60).toFixed(0)} MIN!`,
+        'error'
+      );
+    } else {
+      addLog(
+        'IEF142I',
+        `OFFLINE BATCH SPOOL RECOVERED: +${formatNumber(earned)} MIPS`,
+        'highlight'
+      );
+    }
+  };
+
+  // ============================================================================
+  // IPL PRESTIGE (SOFT RESET) CALCULATION & EXECUTION
+  // ============================================================================
+
+  const pendingArchTokens = useMemo(() => {
+    if (totalMipsEarned < 10000) return 0;
+    return Math.max(1, Math.floor(Math.pow(totalMipsEarned / 8000, 0.42)));
+  }, [totalMipsEarned]);
+
+  const nextHwGen = HARDWARE_GENERATIONS[hwGenIndex + 1] || null;
+  const canUpgradeHwOnIpl = nextHwGen && totalMipsEarned >= nextHwGen.reqMips;
+
+  const executeSystemIpl = () => {
+    const tokensGained = pendingArchTokens;
+    const willUpgradeHw = canUpgradeHwOnIpl;
+    const newHwIndex = willUpgradeHw ? hwGenIndex + 1 : hwGenIndex;
+
+    setArchTokens((prev) => prev + tokensGained);
+    setHwGenIndex(newHwIndex);
+    setIplCount((prev) => prev + 1);
+    setZiipEngines((prev) => prev + 1); // Permanent +1 zIIP on every IPL!
+
+    // Soft-reset dynamic run state
+    setMips(50);
+    setTotalMipsEarned(50);
+    setJclJobs(INITIAL_JCL_JOBS);
+    setOwnedInitiators(1);
+    setActiveInitiators(1);
+    setPr1State('IDLE');
+    setSpoolUsage(0);
+    setSubsystems(INITIAL_SUBSYSTEMS);
+    setRamUpgradeLevel(0);
+    setCoolingLevel(0);
+    setPurgeBuffTimer(0);
+    setDaBuffTimer(0);
+
+    // Keep unlocked window licenses so UI doesn't regress painfully, but close secondary ones to save CPU
+    setWindows((prev) => {
+      const next = { ...prev };
+      Object.keys(next).forEach((k) => {
+        if (!next[k].alwaysOpen) next[k] = { ...next[k], isOpen: false };
+      });
+      return next;
+    });
+
+    setConfirmIplModal(false);
+    setShowBootModal(true);
+    addLog(
+      'IEA301I',
+      `SYSTEM IPL COMPLETE! ARCHITECTURE UPGRADED TO ${HARDWARE_GENERATIONS[newHwIndex].name}. +${tokensGained} TOKENS, +1 PERMANENT zIIP!`,
+      'highlight'
+    );
+  };
+
+  const handleHardReset = () => {
+    localStorage.removeItem('zos_incremental_save_v1');
+    window.location.reload();
+  };
+
+  // Determine LED blink duration from MIPS/sec
+  const ledSpeedMs = Math.max(120, 1200 - Math.min(1050, Math.log10(productionStats.totalMipsPerSec + 1) * 220));
+
+  // Count open windows for dynamic grid layout
+  const openWindowsList = Object.values(windows).filter((w) => w.isOpen);
+
+  return (
+    <div className="min-h-screen bg-[#070a0e] text-[#33ff33] font-mono select-none flex flex-col relative overflow-x-hidden">
+      {/* CRT Scanline Overlay */}
+      {scanlines && (
+        <div
+          className="pointer-events-none fixed inset-0 z-40 opacity-15"
+          style={{
+            background:
+              'linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.45) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.03), rgba(0, 255, 0, 0.01), rgba(0, 0, 255, 0.03))',
+            backgroundSize: '100% 3px, 6px 100%',
+          }}
+        />
+      )}
+
+      {/* Floating +MIPS Click Feedback */}
+      {floatingClicks.map((fc) => (
+        <div
+          key={fc.id}
+          className="pointer-events-none fixed z-50 text-xs font-bold text-[#33ff33] bg-black/80 border border-[#33ff33]/50 px-2 py-0.5 rounded shadow-lg animate-bounce"
+          style={{ left: fc.x - 30, top: fc.y - 28 }}
+        >
+          {fc.val}
+        </div>
+      ))}
+
+      {/* ====================================================================
+          TOP HARDWARE RACK & TELEMETRY BAR (IBM z12 -> z16)
+      ==================================================================== */}
+      <header className="bg-[#0b1017] border-b border-[#1e2d3d] px-3 py-2 sticky top-0 z-30 shadow-xl">
+        <div className="max-w-[1800px] mx-auto flex flex-wrap items-center justify-between gap-3">
+          {/* Left: Physical Mainframe Rack Visualizer & Generation Badge */}
+          <div className="flex items-center gap-3 bg-[#070a0e] border border-[#1e2d3d] px-3 py-1.5 rounded">
+            {/* Pixel/SVG IBM zSeries Rack Icon with Blinking Activity LEDs */}
+            <div className="relative w-9 h-11 bg-[#111923] border border-[#2e445c] rounded-sm flex flex-col justify-between p-1">
+              <div className="text-[7px] text-[#00e5ff] font-bold tracking-tighter leading-none text-center border-b border-[#2e445c] pb-0.5">
+                {currentHw.short}
+              </div>
+              <div className="grid grid-cols-3 gap-0.5 my-auto">
+                {[0, 1, 2, 3, 4, 5].map((led) => (
+                  <span
+                    key={led}
+                    className={`w-1.5 h-1.5 rounded-full ${
+                      isThrashing
+                        ? 'bg-[#ff3333]'
+                        : led % 2 === 0
+                        ? 'bg-[#33ff33]'
+                        : 'bg-[#00e5ff]'
+                    }`}
+                    style={{
+                      animation: `pulse ${ledSpeedMs + led * 70}ms infinite alternate`,
+                    }}
+                  />
+                ))}
+              </div>
+              <div className="h-1 bg-[#00e5ff]/40 rounded-full w-full" />
+            </div>
+
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold tracking-wider text-white">
+                  {currentHw.name}
+                </span>
+                <span className="text-[10px] px-1.5 py-0.2 bg-[#00e5ff]/20 text-[#00e5ff] border border-[#00e5ff]/40 rounded">
+                  x{currentHw.mult} HW MULT
+                </span>
+              </div>
+              <div className="text-[11px] text-slate-400 flex items-center gap-3 mt-0.5">
+                <span>LPAR: <strong className="text-[#33ff33]">ZOS1</strong></span>
+                <span>IPLs: <strong className="text-[#ffb000]">{iplCount}</strong></span>
+                <span>TOKENS: <strong className="text-[#00e5ff]">{archTokens}</strong></span>
+              </div>
+            </div>
+          </div>
+
+          {/* Center: Core Telemetry Gauges (MIPS, CPU %, zIIP, RAM, SPOOL) */}
+          <div className="flex flex-wrap items-center gap-3 flex-1 justify-center">
+            {/* MIPS Counter */}
+            <div className="bg-[#070a0e] border border-[#33ff33]/40 px-3.5 py-1.5 rounded min-w-[175px]">
+              <div className="text-[10px] text-slate-400 flex justify-between">
+                <span>TOTAL MIPS CAPACITY</span>
+                <span className="text-[#33ff33] font-bold">+{formatNumber(productionStats.totalMipsPerSec)}/s</span>
+              </div>
+              <div className="text-lg font-extrabold text-[#33ff33] tracking-tight">
+                {formatNumber(mips, 1)} <span className="text-xs font-normal text-[#33ff33]/70">MIPS</span>
+              </div>
+            </div>
+
+            {/* MAIN CPU LOAD (%) */}
+            <div
+              className={`bg-[#070a0e] border px-3 py-1.5 rounded min-w-[185px] transition-colors ${
+                isThrashing
+                  ? 'border-[#ff3333] bg-[#ff3333]/10 animate-pulse'
+                  : cpuBreakdown.total >= 85
+                  ? 'border-[#ffb000]/60'
+                  : 'border-[#1e2d3d]'
+              }`}
+            >
+              <div className="text-[10px] flex justify-between items-center">
+                <span className="text-slate-400">MAIN CPU LOAD</span>
+                <span
+                  className={`font-bold ${
+                    isThrashing
+                      ? 'text-[#ff3333]'
+                      : cpuBreakdown.total >= 85
+                      ? 'text-[#ffb000]'
+                      : 'text-[#00e5ff]'
+                  }`}
+                >
+                  {cpuBreakdown.total}% {isThrashing && '(!THRASHING!)'}
+                </span>
+              </div>
+              <div className="w-full h-2.5 bg-slate-900 rounded-sm overflow-hidden mt-1 border border-slate-700">
+                <div
+                  className={`h-full transition-all duration-200 ${
+                    isThrashing
+                      ? 'bg-[#ff3333]'
+                      : cpuBreakdown.total >= 85
+                      ? 'bg-[#ffb000]'
+                      : 'bg-[#00e5ff]'
+                  }`}
+                  style={{ width: `${Math.min(100, cpuBreakdown.total)}%` }}
+                />
+              </div>
+              <div className="text-[9px] text-slate-400 mt-0.5 flex justify-between">
+                <span>ASIDs: {cpuBreakdown.windows}%</span>
+                <span>INITs: {cpuBreakdown.initiators}%</span>
+                <span>SUB: {cpuBreakdown.subsystems}%</span>
+              </div>
+            </div>
+
+            {/* zIIP Specialty Offload & Active Initiators */}
+            <div className="bg-[#070a0e] border border-[#1e2d3d] px-3 py-1.5 rounded min-w-[145px]">
+              <div className="text-[10px] text-slate-400 flex justify-between">
+                <span>JES2 + zIIP SLOTS</span>
+                <span className="text-[#ffb000] font-bold">{productionStats.slotsUsed}/{totalParallelSlots}</span>
+              </div>
+              <div className="text-xs font-bold text-white mt-0.5 flex items-center justify-between">
+                <span className="text-[#33ff33]">INIT: {activeInitiators}/{ownedInitiators}</span>
+                <span className="text-[#00e5ff] bg-[#00e5ff]/10 px-1.5 py-0.5 rounded border border-[#00e5ff]/30">
+                  zIIP: {ziipEngines}
+                </span>
+              </div>
+            </div>
+
+            {/* RAM & SPOOL Gauges */}
+            <div className="bg-[#070a0e] border border-[#1e2d3d] px-3 py-1.5 rounded min-w-[165px]">
+              <div className="text-[10px] flex justify-between">
+                <span className="text-slate-400">REAL STORAGE (RAM)</span>
+                <span className={usedRamGb >= totalRamGb ? 'text-[#ff3333] font-bold' : 'text-[#00e5ff]'}>
+                  {usedRamGb} / {totalRamGb} GB
+                </span>
+              </div>
+              <div className="text-[10px] flex justify-between mt-1">
+                <span className="text-slate-400">JES2 SPOOL ({currentDasd.name})</span>
+                <span
+                  className={
+                    spoolUsage >= 90
+                      ? 'text-[#ff3333] font-bold animate-pulse'
+                      : spoolUsage >= 70
+                      ? 'text-[#ffb000]'
+                      : 'text-[#33ff33]'
+                  }
+                >
+                  {spoolUsage.toFixed(0)}%
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Right: Utility Buttons (Simulate Offline, Boot Replay, CRT Toggle, Reset) */}
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => simulateOffline(3600)}
+              title="Simulate 1 Hour of Offline Batch Processing (Tests DASD Capacity)"
+              className="px-2 py-1.5 text-[11px] bg-[#131d28] hover:bg-[#1c2b3b] text-[#00e5ff] border border-[#00e5ff]/40 rounded flex items-center gap-1 transition"
+            >
+              <FastForward className="w-3.5 h-3.5" />
+              <span className="hidden xl:inline">Offline +1h</span>
+            </button>
+            <button
+              onClick={() => setShowBootModal(true)}
+              title="Replay 3270 TSO Logon Sequence"
+              className="px-2 py-1.5 text-[11px] bg-[#131d28] hover:bg-[#1c2b3b] text-[#33ff33] border border-[#33ff33]/40 rounded flex items-center gap-1 transition"
+            >
+              <Terminal className="w-3.5 h-3.5" />
+              <span className="hidden xl:inline">TSO Logon</span>
+            </button>
+            <button
+              onClick={() => setScanlines(!scanlines)}
+              title="Toggle CRT Scanlines"
+              className={`px-2 py-1.5 text-[11px] border rounded transition ${
+                scanlines
+                  ? 'bg-[#33ff33]/15 border-[#33ff33]/50 text-[#33ff33]'
+                  : 'bg-[#131d28] border-slate-700 text-slate-400'
+              }`}
+            >
+              CRT
+            </button>
+            <button
+              onClick={() => setConfirmResetModal(true)}
+              title="Hard Reset Save Data"
+              className="p-1.5 text-[11px] bg-[#1a0f12] hover:bg-[#31151b] text-[#ff3333] border border-[#ff3333]/40 rounded transition"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+
+        {/* Active Buffs / System Alerts Banner */}
+        {(isThrashing || pr1State === 'JAMMED' || isSpoolFull || purgeBuffTimer > 0 || daBuffTimer > 0 || pr1State === 'PRINTING') && (
+          <div className="max-w-[1800px] mx-auto mt-2 pt-1.5 border-t border-[#1e2d3d] flex flex-wrap items-center gap-2 text-[11px]">
+            {isThrashing && (
+              <div className="bg-[#ff3333]/20 border border-[#ff3333] text-[#ff3333] px-2.5 py-0.5 rounded font-bold flex items-center gap-1.5 animate-pulse">
+                <AlertTriangle className="w-3.5 h-3.5" />
+                IRA100E SYSTEM THRASHING (&gt;100% CPU): -50% MIPS! CLOSE WINDOWS OR RUN &quot;C U=ALL&quot;
+              </div>
+            )}
+            {pr1State === 'JAMMED' && (
+              <div className="bg-[#ff3333]/20 border border-[#ff3333] text-[#ff3333] px-2.5 py-0.5 rounded font-bold flex items-center gap-1.5 animate-pulse">
+                <AlertTriangle className="w-3.5 h-3.5" />
+                *HASP190 PR1 PAPER JAM (-30% MIPS): RUN &quot;C PR1&quot; THEN &quot;S PR1&quot; IN CONSOLE!
+              </div>
+            )}
+            {isSpoolFull && (
+              <div className="bg-[#ffb000]/20 border border-[#ffb000] text-[#ffb000] px-2.5 py-0.5 rounded font-bold flex items-center gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5" />
+                $HASP050 JES2 SPOOL 100% FULL (ABEND x37 -50% MIPS): RUN &quot;$P&quot; TO PURGE SPOOL!
+              </div>
+            )}
+            {pr1State === 'PRINTING' && (
+              <div className="bg-[#33ff33]/15 border border-[#33ff33]/50 text-[#33ff33] px-2.5 py-0.5 rounded flex items-center gap-1">
+                <Zap className="w-3 h-3" /> PR1 HIGH-SPEED OUTPUT ACTIVE (x3.5 MIPS/s)
+              </div>
+            )}
+            {purgeBuffTimer > 0 && (
+              <div className="bg-[#00e5ff]/15 border border-[#00e5ff]/50 text-[#00e5ff] px-2.5 py-0.5 rounded flex items-center gap-1">
+                <Sparkles className="w-3 h-3" /> $P SPOOL OVERCLOCK: +100% MIPS ({purgeBuffTimer.toFixed(0)}s)
+              </div>
+            )}
+            {daBuffTimer > 0 && (
+              <div className="bg-[#ffb000]/15 border border-[#ffb000]/50 text-[#ffb000] px-2.5 py-0.5 rounded flex items-center gap-1">
+                <Activity className="w-3 h-3" /> D A,L TELEMETRY BUFF: +50% MIPS ({daBuffTimer.toFixed(0)}s)
+              </div>
+            )}
+          </div>
+        )}
+      </header>
+
+      {/* ====================================================================
+          WINDOW MANAGER TASKBAR (UNLOCK & TOGGLE UP TO 6 SESSIONS)
+      ==================================================================== */}
+      <nav className="bg-[#090d13] border-b border-[#1e2d3d] px-3 py-2">
+        <div className="max-w-[1800px] mx-auto flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2 text-xs text-slate-400">
+            <Monitor className="w-4 h-4 text-[#00e5ff]" />
+            <span className="font-bold text-slate-200">VTAM 3270 SESSION MANAGER:</span>
+            <span className="hidden md:inline text-[11px] text-slate-400">
+              (Each open session consumes ASID CPU% &amp; RAM. Close windows to free CPU for Batch Initiators!)
+            </span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {Object.values(windows).map((w) => {
+              const canAfford = mips >= w.unlockCost;
+              if (!w.unlocked) {
+                return (
+                  <button
+                    key={w.id}
+                    onClick={() => unlockWindow(w.id)}
+                    disabled={!canAfford}
+                    className={`px-2.5 py-1 rounded text-xs font-bold border flex items-center gap-1.5 transition ${
+                      canAfford
+                        ? 'bg-[#ffb000]/15 border-[#ffb000] text-[#ffb000] hover:bg-[#ffb000]/25 shadow-sm'
+                        : 'bg-slate-900/60 border-slate-800 text-slate-600 cursor-not-allowed'
+                    }`}
+                  >
+                    <Lock className="w-3 h-3" />
+                    <span>UNLOCK {w.shortTitle}</span>
+                    <span className="text-[10px] px-1 bg-black/50 rounded">
+                      {formatNumber(w.unlockCost)} MIPS
+                    </span>
+                  </button>
+                );
+              }
+
+              return (
+                <button
+                  key={w.id}
+                  onClick={() => toggleWindow(w.id)}
+                  className={`px-2.5 py-1 rounded text-xs font-bold border flex items-center gap-1.5 transition ${
+                    w.isOpen
+                      ? 'bg-[#33ff33]/15 border-[#33ff33] text-[#33ff33]'
+                      : 'bg-[#0d131a] border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200'
+                  }`}
+                >
+                  {w.isOpen ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                  <span>[{w.asid}] {w.shortTitle}</span>
+                  <span className="text-[10px] opacity-75 font-normal">
+                    ({w.cpuUpkeep}% CPU | {w.ramUpkeep}G)
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </nav>
+
+      {/* ====================================================================
+          MAIN MULTISESSION WORKSPACE GRID (UP TO 6 TERMINALS)
+      ==================================================================== */}
+      <main className="flex-1 p-3 max-w-[1800px] w-full mx-auto">
+        <div
+          className={`grid gap-3 ${
+            openWindowsList.length === 1
+              ? 'grid-cols-1 max-w-4xl mx-auto'
+              : openWindowsList.length === 2
+              ? 'grid-cols-1 lg:grid-cols-2'
+              : 'grid-cols-1 md:grid-cols-2 xl:grid-cols-3'
+          }`}
+        >
+          {/* ----------------------------------------------------------------
+              WINDOW 1: [ASID 0001] TSO/E MASTER CONSOLE (ALWAYS OPEN)
+          ---------------------------------------------------------------- */}
+          {windows.tso.isOpen && (() => {
+            const t = getThemeClasses(windows.tso.theme);
+            return (
+              <section
+                className={`bg-[#0d131a] border-2 ${t.border} rounded flex flex-col h-[470px] shadow-2xl relative overflow-hidden`}
+              >
+                {/* 3270 Window Title Bar */}
+                <div className="bg-[#121b24] border-b border-slate-800 px-3 py-1.5 flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className={`px-1.5 py-0.5 text-[10px] font-bold rounded ${t.badge}`}>
+                      ASID {windows.tso.asid}
+                    </span>
+                    <span className={`font-bold tracking-wide ${t.text}`}>{windows.tso.title}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-slate-400">UPKEEP: 5% CPU</span>
+                    <button
+                      onClick={() => cycleWindowTheme('tso')}
+                      title="Switch 3270 Phosphor Color (Green / Cyan / Amber)"
+                      className={`text-[10px] px-1.5 py-0.5 rounded border ${t.button}`}
+                    >
+                      3270 COLOR
+                    </button>
+                  </div>
+                </div>
+
+                {/* Manual Action Bar (Submit JCL Clicker & Upgrade) */}
+                <div className="p-2.5 bg-[#090d12] border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-2">
+                  <button
+                    onClick={handleManualSubmit}
+                    className={`flex-1 py-2 px-3 rounded font-extrabold text-xs border-2 ${t.button} bg-black/50 flex items-center justify-center gap-2 active:scale-[0.99] transition shadow-inner`}
+                  >
+                    <Play className="w-4 h-4 fill-current" />
+                    <span>SUBMIT JCL BATCH (+{formatNumber(productionStats.clickPower)} MIPS)</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      const cost = Math.floor(25 * Math.pow(1.75, clickUpgradeLevel));
+                      if (mips >= cost) {
+                        setMips((prev) => prev - cost);
+                        setClickUpgradeLevel((prev) => prev + 1);
+                      }
+                    }}
+                    disabled={mips < Math.floor(25 * Math.pow(1.75, clickUpgradeLevel))}
+                    className="py-2 px-2.5 rounded text-[11px] bg-[#121b24] hover:bg-[#192633] disabled:opacity-40 border border-slate-700 text-slate-200 transition"
+                  >
+                    Optimize JCL Lv.{clickUpgradeLevel + 1} ({formatNumber(Math.floor(25 * Math.pow(1.75, clickUpgradeLevel)))} MIPS)
+                  </button>
+                </div>
+
+                {/* Scrollable 3270 Log Output */}
+                <div className="flex-1 p-3 overflow-y-auto space-y-1 text-xs font-mono bg-[#06090d]">
+                  {logs.map((entry) => {
+                    let lineColor = t.text;
+                    if (entry.type === 'error') lineColor = 'text-[#ff3333] font-bold';
+                    else if (entry.type === 'warn') lineColor = 'text-[#ffea00]';
+                    else if (entry.type === 'highlight') lineColor = 'text-[#00e5ff] font-bold';
+                    else if (entry.type === 'info') lineColor = 'text-slate-300';
+                    else if (entry.type === 'cmd') lineColor = 'text-white font-bold';
+
+                    return (
+                      <div key={entry.id} className={`leading-relaxed break-words ${lineColor}`}>
+                        <span className="text-slate-500 mr-1.5">[{entry.time}]</span>
+                        <span className="opacity-85 mr-1.5">{entry.code}</span>
+                        <span>{entry.text}</span>
+                      </div>
+                    );
+                  })}
+                  <div ref={terminalEndRef} />
+                </div>
+
+                {/* Quick Tactical Command Chips */}
+                <div className="px-2.5 py-1.5 bg-[#0a0f16] border-t border-slate-800/80 flex flex-wrap items-center gap-1.5">
+                  <span className="text-[10px] text-slate-400 mr-1">QUICK MACRO:</span>
+                  {[
+                    { cmd: 'SUBMIT', label: 'SUBMIT (+MIPS)' },
+                    {
+                      cmd: '$P',
+                      label: purgeCooldown > 0 ? `$P (${purgeCooldown.toFixed(0)}s)` : '$P (Purge +100%)',
+                    },
+                    { cmd: 'D A,L', label: 'D A,L (+50%)' },
+                    { cmd: 'S PR1', label: 'S PR1 (x3.5 Buff)' },
+                    { cmd: 'C PR1', label: 'C PR1 (Cancel Jam)' },
+                    { cmd: 'HELP', label: 'HELP' },
+                  ].map((chip) => (
+                    <button
+                      key={chip.cmd}
+                      onClick={() => executeCommand(chip.cmd)}
+                      className={`text-[10px] px-2 py-0.5 rounded border ${
+                        chip.cmd === 'C PR1' && pr1State === 'JAMMED'
+                          ? 'bg-[#ff3333]/30 border-[#ff3333] text-[#ff3333] font-bold animate-bounce'
+                          : chip.cmd === 'S PR1' && pr1State === 'CANCELLED'
+                          ? 'bg-[#33ff33]/30 border-[#33ff33] text-[#33ff33] font-bold animate-pulse'
+                          : 'bg-[#121b24] border-slate-700 text-slate-300 hover:border-slate-400'
+                      }`}
+                    >
+                      {chip.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* 3270 Command Input Line */}
+                <div className="bg-[#101822] border-t border-slate-700 px-3 py-2 flex items-center gap-2">
+                  <span className={`text-xs font-bold ${t.text}`}>COMMAND ===&gt;</span>
+                  <input
+                    type="text"
+                    value={cmdInput}
+                    onChange={(e) => setCmdInput(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    placeholder="Type $P, S PR1, C PR1, D A,L, SUBMIT..."
+                    className={`flex-1 bg-transparent text-xs font-bold focus:outline-none ${t.text} placeholder-slate-600`}
+                  />
+                  <button
+                    onClick={() => executeCommand(cmdInput)}
+                    className={`px-2.5 py-0.5 text-[11px] font-bold rounded border ${t.button}`}
+                  >
+                    ENTER
+                  </button>
+                </div>
+              </section>
+            );
+          })()}
+
+          {/* ----------------------------------------------------------------
+              WINDOW 2: [ASID 002A] SDSF - DA (ACTIVE JOBS & INITIATORS)
+          ---------------------------------------------------------------- */}
+          {windows.sdsf.isOpen && (() => {
+            const t = getThemeClasses(windows.sdsf.theme);
+            return (
+              <section
+                className={`bg-[#0d131a] border-2 ${t.border} rounded flex flex-col h-[470px] shadow-2xl overflow-hidden`}
+              >
+                {/* Header */}
+                <div className="bg-[#121b24] border-b border-slate-800 px-3 py-1.5 flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className={`px-1.5 py-0.5 text-[10px] font-bold rounded ${t.badge}`}>
+                      ASID {windows.sdsf.asid}
+                    </span>
+                    <span className={`font-bold ${t.text}`}>{windows.sdsf.title}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => cycleWindowTheme('sdsf')}
+                      className={`text-[10px] px-1.5 py-0.5 rounded border ${t.button}`}
+                    >
+                      COLOR
+                    </button>
+                    <button
+                      onClick={() => toggleWindow('sdsf')}
+                      title="Close Session to Free 10% CPU & 4GB RAM"
+                      className="text-[10px] px-1.5 py-0.5 rounded bg-[#ff3333]/20 text-[#ff3333] border border-[#ff3333]/40 hover:bg-[#ff3333]/30"
+                    >
+                      CLOSE (-10% CPU)
+                    </button>
+                  </div>
+                </div>
+
+                {/* JES2 Initiator & zIIP Allocation Bar */}
+                <div className="p-2.5 bg-[#090d13] border-b border-slate-800 grid grid-cols-2 gap-2 text-xs">
+                  {/* Standard Initiators */}
+                  <div className="bg-[#0d131a] border border-slate-800 p-2 rounded flex flex-col justify-between">
+                    <div className="flex justify-between items-center">
+                      <span className="text-[11px] text-slate-300 font-bold">JES2 INITIATORS</span>
+                      <span className="text-[10px] text-[#ffb000]">8% CPU each</span>
+                    </div>
+                    <div className="flex items-center justify-between my-1.5">
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => setActiveInitiators((prev) => Math.max(0, prev - 1))}
+                          className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-white rounded text-xs font-bold"
+                        >
+                          -
+                        </button>
+                        <span className={`px-2 font-bold ${t.text}`}>
+                          {activeInitiators} / {ownedInitiators} ACTIVE
+                        </span>
+                        <button
+                          onClick={() =>
+                            setActiveInitiators((prev) => Math.min(ownedInitiators, prev + 1))
+                          }
+                          className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-white rounded text-xs font-bold"
+                        >
+                          +
+                        </button>
+                      </div>
+                    </div>
+                    <button
+                      onClick={buyInitiator}
+                      disabled={mips < initiatorCost}
+                      className={`w-full py-1 rounded text-[11px] font-bold border ${t.button} disabled:opacity-40`}
+                    >
+                      +1 Initiator ({formatNumber(initiatorCost)} MIPS)
+                    </button>
+                  </div>
+
+                  {/* zIIP Specialty Processors */}
+                  <div className="bg-[#0d131a] border border-[#00e5ff]/30 p-2 rounded flex flex-col justify-between">
+                    <div className="flex justify-between items-center">
+                      <span className="text-[11px] text-[#00e5ff] font-bold">zIIP ENGINES</span>
+                      <span className="text-[10px] bg-[#33ff33]/20 text-[#33ff33] px-1 rounded">
+                        0% CPU UPKEEP!
+                      </span>
+                    </div>
+                    <div className="my-1.5 text-xs text-slate-300">
+                      Active zIIPs: <strong className="text-[#00e5ff]">{ziipEngines}</strong> (Total Slots: {totalParallelSlots})
+                    </div>
+                    <button
+                      onClick={buyZiipWithMips}
+                      disabled={mips < ziipMipsCost}
+                      className="w-full py-1 rounded text-[11px] font-bold border border-[#00e5ff]/60 text-[#00e5ff] hover:bg-[#00e5ff]/20 disabled:opacity-40"
+                    >
+                      Buy zIIP ({formatNumber(ziipMipsCost)} MIPS)
+                    </button>
+                  </div>
+                </div>
+
+                {/* SDSF Active Batch Jobs Table */}
+                <div className="flex-1 p-2.5 overflow-y-auto space-y-2">
+                  <div className="grid grid-cols-12 text-[10px] text-slate-400 border-b border-slate-800 pb-1 px-1 font-bold">
+                    <div className="col-span-3">JOBNAME</div>
+                    <div className="col-span-2">STATUS</div>
+                    <div className="col-span-3">OUTPUT</div>
+                    <div className="col-span-4 text-right">UPGRADE JCL</div>
+                  </div>
+
+                  {jclJobs.map((job, idx) => {
+                    const cost = Math.floor(job.baseCost * Math.pow(job.costMult, job.level));
+                    const isRunning = job.level > 0 && idx < totalParallelSlots;
+                    const isQueued = job.level > 0 && idx >= totalParallelSlots;
+                    return (
+                      <div
+                        key={job.id}
+                        className="bg-[#080c11] border border-slate-800/90 rounded p-2 grid grid-cols-12 items-center gap-1 text-xs"
+                      >
+                        <div className="col-span-3">
+                          <div className={`font-bold ${t.text}`}>{job.jobName}</div>
+                          <div className="text-[10px] text-slate-500">
+                            {job.stepName} (Lv.{job.level})
+                          </div>
+                        </div>
+
+                        <div className="col-span-2">
+                          {job.level === 0 ? (
+                            <span className="text-[10px] text-slate-600">INACTIVE</span>
+                          ) : isRunning ? (
+                            <span className="text-[10px] px-1.5 py-0.5 bg-[#33ff33]/20 text-[#33ff33] rounded font-bold">
+                              EXEC
+                            </span>
+                          ) : (
+                            <span className="text-[10px] px-1.5 py-0.5 bg-[#ffb000]/20 text-[#ffb000] rounded font-bold">
+                              WAIT INIT
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="col-span-3">
+                          <div className="text-slate-200 font-bold">
+                            +{formatNumber(job.level * job.baseMips * productionStats.multiplier)}/s
+                          </div>
+                          <div className="text-[10px] text-slate-500">
+                            Base: {formatNumber(job.baseMips)}/lv
+                          </div>
+                        </div>
+
+                        <div className="col-span-4 text-right">
+                          <button
+                            onClick={() => buyJclUpgrade(job.id)}
+                            disabled={mips < cost}
+                            className={`px-2.5 py-1 rounded text-[11px] font-bold border ${t.button} disabled:opacity-40`}
+                          >
+                            {job.level === 0 ? 'Compile' : 'Upgrade'} ({formatNumber(cost)})
+                          </button>
+                        </div>
+
+                        {isQueued && (
+                          <div className="col-span-12 text-[10px] text-[#ffb000] mt-1">
+                            * Waiting for free JES2 Initiator or zIIP slot to execute!
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            );
+          })()}
+
+          {/* ----------------------------------------------------------------
+              WINDOW 3: [ASID 003F] JES2 SPOOL & PRINTER PR1 (QTE MECHANIC)
+          ---------------------------------------------------------------- */}
+          {windows.jes2.isOpen && (() => {
+            const t = getThemeClasses(windows.jes2.theme);
+            const paperCost = Math.floor(180 * Math.pow(2.2, paperQualityLevel));
+            return (
+              <section
+                className={`bg-[#0d131a] border-2 ${
+                  pr1State === 'JAMMED' ? 'border-[#ff3333]' : t.border
+                } rounded flex flex-col h-[470px] shadow-2xl overflow-hidden`}
+              >
+                {/* Header */}
+                <div className="bg-[#121b24] border-b border-slate-800 px-3 py-1.5 flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className={`px-1.5 py-0.5 text-[10px] font-bold rounded ${t.badge}`}>
+                      ASID {windows.jes2.asid}
+                    </span>
+                    <span className={`font-bold ${t.text}`}>{windows.jes2.title}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => cycleWindowTheme('jes2')}
+                      className={`text-[10px] px-1.5 py-0.5 rounded border ${t.button}`}
+                    >
+                      COLOR
+                    </button>
+                    <button
+                      onClick={() => toggleWindow('jes2')}
+                      className="text-[10px] px-1.5 py-0.5 rounded bg-[#ff3333]/20 text-[#ff3333] border border-[#ff3333]/40"
+                    >
+                      CLOSE (-8% CPU)
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex-1 p-3 flex flex-col justify-between overflow-y-auto space-y-2.5 text-xs">
+                  {/* Printer PR1 Status Box */}
+                  <div
+                    className={`p-3 rounded border-2 ${
+                      pr1State === 'JAMMED'
+                        ? 'bg-[#ff3333]/15 border-[#ff3333]'
+                        : pr1State === 'PRINTING'
+                        ? 'bg-[#33ff33]/10 border-[#33ff33]'
+                        : 'bg-[#080c11] border-slate-800'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-slate-300">DEVICE: JES2 PRINTER PR1</span>
+                      <span
+                        className={`px-2 py-0.5 rounded text-[11px] font-extrabold ${
+                          pr1State === 'JAMMED'
+                            ? 'bg-[#ff3333] text-black animate-pulse'
+                            : pr1State === 'PRINTING'
+                            ? 'bg-[#33ff33] text-black'
+                            : 'bg-slate-800 text-slate-300'
+                        }`}
+                      >
+                        {pr1State}
+                      </span>
+                    </div>
+
+                    {pr1State === 'IDLE' && (
+                      <p className="text-[11px] text-slate-400 mt-2">
+                        Printer PR1 is IDLE. Start high-volume batch printing with{' '}
+                        <strong className="text-white">S PR1</strong> for a massive{' '}
+                        <strong className="text-[#33ff33]">x3.5 MIPS/s</strong> boost!
+                      </p>
+                    )}
+
+                    {pr1State === 'PRINTING' && (
+                      <div className="mt-2 space-y-1">
+                        <div className="text-[#33ff33] font-bold">
+                          HIGH-SPEED SYSOUT STREAMING: x3.5 GLOBAL MIPS!
+                        </div>
+                        <div className="text-[11px] text-slate-400">
+                          Paper Jam Risk: <strong className="text-[#ffb000]">{pr1JamChancePerSec.toFixed(1)}%/sec</strong>
+                        </div>
+                      </div>
+                    )}
+
+                    {pr1State === 'JAMMED' && (
+                      <div className="mt-2 space-y-1.5">
+                        <div className="text-[#ff3333] font-bold">
+                          *HASP190 PR1 INTERVENTION REQUIRED - PAPER JAM (-30% MIPS)
+                        </div>
+                        <div className="text-[11px] text-slate-200 bg-black/60 p-2 rounded border border-[#ff3333]/50">
+                          <div>RECOVERY PROCEDURE:</div>
+                          <div className="text-[#ffea00]">1. Execute &quot;C PR1&quot; to cancel &amp; drain printer</div>
+                          <div className="text-slate-400">2. Execute &quot;S PR1&quot; to restart initiator</div>
+                        </div>
+                      </div>
+                    )}
+
+                    {pr1State === 'CANCELLED' && (
+                      <div className="mt-2 space-y-1">
+                        <div className="text-[#ffea00] font-bold">
+                          $HASP000 PR1 DRAINED &amp; CLEAR OF PAPER JAM.
+                        </div>
+                        <div className="text-[11px] text-slate-300">
+                          Step 1 complete! Now execute <strong className="text-[#33ff33]">S PR1</strong> to resume x3.5 MIPS!
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Direct Control Buttons */}
+                    <div className="grid grid-cols-2 gap-2 mt-3">
+                      <button
+                        onClick={() => executeCommand('C PR1')}
+                        className={`py-1.5 px-2 rounded font-bold text-xs border ${
+                          pr1State === 'JAMMED'
+                            ? 'bg-[#ff3333] text-black border-[#ff3333] animate-pulse'
+                            : 'bg-slate-900 border-slate-700 text-slate-300 hover:bg-slate-800'
+                        }`}
+                      >
+                        $C PR1 (Cancel)
+                      </button>
+                      <button
+                        onClick={() => executeCommand('S PR1')}
+                        className={`py-1.5 px-2 rounded font-bold text-xs border ${
+                          pr1State === 'CANCELLED' || pr1State === 'IDLE'
+                            ? 'bg-[#33ff33]/20 border-[#33ff33] text-[#33ff33] hover:bg-[#33ff33]/30'
+                            : 'bg-slate-900 border-slate-700 text-slate-500'
+                        }`}
+                      >
+                        $S PR1 (Start x3.5)
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* JES2 Spool Capacity Bar */}
+                  <div className="bg-[#080c11] border border-slate-800 p-2.5 rounded">
+                    <div className="flex justify-between text-[11px] mb-1">
+                      <span className="text-slate-300 font-bold">JES2 SPOOL UTILIZATION</span>
+                      <span className={spoolUsage >= 85 ? 'text-[#ff3333] font-bold' : t.text}>
+                        {spoolUsage.toFixed(1)}%
+                      </span>
+                    </div>
+                    <div className="w-full h-3 bg-slate-900 rounded overflow-hidden border border-slate-700">
+                      <div
+                        className={`h-full transition-all ${
+                          spoolUsage >= 90 ? 'bg-[#ff3333]' : spoolUsage >= 70 ? 'bg-[#ffb000]' : 'bg-[#33ff33]'
+                        }`}
+                        style={{ width: `${spoolUsage}%` }}
+                      />
+                    </div>
+                    <div className="flex justify-between items-center mt-2">
+                      <span className="text-[10px] text-slate-400">
+                        At 100%, Abend x37 reduces MIPS by 50%.
+                      </span>
+                      <button
+                        onClick={() => executeCommand('$P')}
+                        disabled={purgeCooldown > 0}
+                        className={`px-2.5 py-1 rounded text-[11px] font-bold border ${t.button} disabled:opacity-40`}
+                      >
+                        {purgeCooldown > 0
+                          ? `$P Cooldown (${purgeCooldown.toFixed(0)}s)`
+                          : 'Run $P (Purge + 2x Buff)'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Printer Upgrades */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between bg-[#080c11] border border-slate-800 p-2 rounded">
+                      <div>
+                        <div className="font-bold text-slate-200">
+                          Continuous Feed Laser Paper (Lv.{paperQualityLevel}/5)
+                        </div>
+                        <div className="text-[10px] text-slate-400">
+                          Reduces PR1 Paper Jam probability ({pr1JamChancePerSec.toFixed(1)}%/s)
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => {
+                          if (paperQualityLevel < 5 && mips >= paperCost) {
+                            setMips((prev) => prev - paperCost);
+                            setPaperQualityLevel((prev) => prev + 1);
+                          }
+                        }}
+                        disabled={paperQualityLevel >= 5 || mips < paperCost}
+                        className={`px-2.5 py-1 rounded text-[11px] font-bold border ${t.button} disabled:opacity-40`}
+                      >
+                        {paperQualityLevel >= 5 ? 'MAXED' : `${formatNumber(paperCost)} MIPS`}
+                      </button>
+                    </div>
+
+                    <div className="flex items-center justify-between bg-[#080c11] border border-slate-800 p-2 rounded">
+                      <div>
+                        <div className="font-bold text-[#00e5ff]">NetView REXX Auto-Operator</div>
+                        <div className="text-[10px] text-slate-400">
+                          Automatically runs $C PR1 &amp; $S PR1 within seconds of a jam
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => {
+                          if (!rexxAutoOp && mips >= 15000) {
+                            setMips((prev) => prev - 15000);
+                            setRexxAutoOp(true);
+                            addLog('REXX00I', 'NETVIEW REXX AUTO-OPERATOR SCRIPT INSTALLED.', 'highlight');
+                          }
+                        }}
+                        disabled={rexxAutoOp || mips < 15000}
+                        className="px-2.5 py-1 rounded text-[11px] font-bold border border-[#00e5ff]/60 text-[#00e5ff] hover:bg-[#00e5ff]/20 disabled:opacity-40"
+                      >
+                        {rexxAutoOp ? 'ACTIVE' : '15.0K MIPS'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            );
+          })()}
+
+          {/* ----------------------------------------------------------------
+              WINDOW 4: [ASID 005C] CICS REGIONS & DB2 SUBSYSTEMS
+          ---------------------------------------------------------------- */}
+          {windows.cics.isOpen && (() => {
+            const t = getThemeClasses(windows.cics.theme);
+            return (
+              <section
+                className={`bg-[#0d131a] border-2 ${t.border} rounded flex flex-col h-[470px] shadow-2xl overflow-hidden`}
+              >
+                <div className="bg-[#121b24] border-b border-slate-800 px-3 py-1.5 flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className={`px-1.5 py-0.5 text-[10px] font-bold rounded ${t.badge}`}>
+                      ASID {windows.cics.asid}
+                    </span>
+                    <span className={`font-bold ${t.text}`}>{windows.cics.title}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => cycleWindowTheme('cics')}
+                      className={`text-[10px] px-1.5 py-0.5 rounded border ${t.button}`}
+                    >
+                      COLOR
+                    </button>
+                    <button
+                      onClick={() => toggleWindow('cics')}
+                      className="text-[10px] px-1.5 py-0.5 rounded bg-[#ff3333]/20 text-[#ff3333] border border-[#ff3333]/40"
+                    >
+                      CLOSE (-12% CPU)
+                    </button>
+                  </div>
+                </div>
+
+                <div className="p-2.5 bg-[#090d13] border-b border-slate-800 flex justify-between items-center text-xs">
+                  <span className="text-slate-400">
+                    Online Transaction Processing (No JES2 Initiator slot required)
+                  </span>
+                  <span className={`font-bold ${t.text}`}>
+                    +{formatNumber(productionStats.subMips)} MIPS/s
+                  </span>
+                </div>
+
+                <div className="flex-1 p-2.5 overflow-y-auto space-y-2">
+                  {subsystems.map((sub) => {
+                    const cost = Math.floor(sub.baseCost * Math.pow(sub.costMult, sub.level));
+                    return (
+                      <div
+                        key={sub.id}
+                        className="bg-[#080c11] border border-slate-800 p-2.5 rounded flex items-center justify-between gap-2 text-xs"
+                      >
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className={`font-bold text-sm ${t.text}`}>{sub.name}</span>
+                            <span className="text-[10px] px-1.5 py-0.5 bg-slate-800 text-slate-300 rounded">
+                              {sub.type}
+                            </span>
+                            <span className="text-[11px] text-slate-400">Region Lv.{sub.level}</span>
+                          </div>
+                          <div className="text-[11px] text-slate-400 mt-0.5">{sub.desc}</div>
+                          <div className="text-[11px] text-slate-300 mt-1 flex items-center gap-3">
+                            <span>
+                              Output:{' '}
+                              <strong className="text-[#33ff33]">
+                                +{formatNumber(sub.level * sub.baseMips * productionStats.multiplier)} MIPS/s
+                              </strong>
+                            </span>
+                            <span>
+                              Throughput:{' '}
+                              <strong className="text-[#00e5ff]">
+                                {formatNumber(sub.level * sub.txPerLevel, 0)} TX/s
+                              </strong>
+                            </span>
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={() => buySubsystem(sub.id)}
+                          disabled={mips < cost}
+                          className={`px-3 py-2 rounded text-xs font-bold border ${t.button} disabled:opacity-40 shrink-0`}
+                        >
+                          <div>{sub.level === 0 ? 'Start Region' : 'Scale Region'}</div>
+                          <div className="text-[10px] opacity-80">{formatNumber(cost)} MIPS</div>
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            );
+          })()}
+
+          {/* ----------------------------------------------------------------
+              WINDOW 5: [ASID 008E] HARDWARE & DASD 3390 STORAGE
+          ---------------------------------------------------------------- */}
+          {windows.hardware.isOpen && (() => {
+            const t = getThemeClasses(windows.hardware.theme);
+            const ramCost = Math.floor(400 * Math.pow(2.5, ramUpgradeLevel));
+            const coolingCost = Math.floor(600 * Math.pow(2.6, coolingLevel));
+            const nextDasd = DASD_MODELS[dasdLevel + 1] || null;
+
+            return (
+              <section
+                className={`bg-[#0d131a] border-2 ${t.border} rounded flex flex-col h-[470px] shadow-2xl overflow-hidden`}
+              >
+                <div className="bg-[#121b24] border-b border-slate-800 px-3 py-1.5 flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className={`px-1.5 py-0.5 text-[10px] font-bold rounded ${t.badge}`}>
+                      ASID {windows.hardware.asid}
+                    </span>
+                    <span className={`font-bold ${t.text}`}>{windows.hardware.title}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => cycleWindowTheme('hardware')}
+                      className={`text-[10px] px-1.5 py-0.5 rounded border ${t.button}`}
+                    >
+                      COLOR
+                    </button>
+                    <button
+                      onClick={() => toggleWindow('hardware')}
+                      className="text-[10px] px-1.5 py-0.5 rounded bg-[#ff3333]/20 text-[#ff3333] border border-[#ff3333]/40"
+                    >
+                      CLOSE (-8% CPU)
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex-1 p-3 overflow-y-auto space-y-3 text-xs">
+                  {/* Mainframe Real Storage (RAM) Expansion */}
+                  <div className="bg-[#080c11] border border-slate-800 p-3 rounded flex items-center justify-between gap-2">
+                    <div>
+                      <div className={`font-bold text-sm ${t.text}`}>
+                        Central Storage Drawer (+16 GB RAM)
+                      </div>
+                      <div className="text-[11px] text-slate-400 mt-0.5">
+                        Current Capacity: <strong className="text-white">{totalRamGb} GB</strong> (Used: {usedRamGb} GB)
+                      </div>
+                      <div className="text-[10px] text-slate-500 mt-0.5">
+                        Required to keep all 6 management sessions and CICS regions open simultaneously.
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => {
+                        if (mips >= ramCost) {
+                          setMips((prev) => prev - ramCost);
+                          setRamUpgradeLevel((prev) => prev + 1);
+                          addLog('IEE500I', 'CENTRAL STORAGE EXPANDED BY +16 GB REAL RAM.', 'info');
+                        }
+                      }}
+                      disabled={mips < ramCost}
+                      className={`px-3 py-2 rounded font-bold border ${t.button} disabled:opacity-40 shrink-0`}
+                    >
+                      +16 GB ({formatNumber(ramCost)} MIPS)
+                    </button>
+                  </div>
+
+                  {/* Sub-Capacity WLM & Chilled Water Cooling */}
+                  <div className="bg-[#080c11] border border-slate-800 p-3 rounded flex items-center justify-between gap-2">
+                    <div>
+                      <div className="font-bold text-sm text-[#33ff33]">
+                        WLM Sub-Capacity Tuning (Lv.{coolingLevel}/8)
+                      </div>
+                      <div className="text-[11px] text-slate-400 mt-0.5">
+                        Reduces Main CPU % upkeep of all Windows &amp; Initiators by{' '}
+                        <strong className="text-[#33ff33]">-5% per level</strong>.
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => {
+                        if (coolingLevel < 8 && mips >= coolingCost) {
+                          setMips((prev) => prev - coolingCost);
+                          setCoolingLevel((prev) => prev + 1);
+                          addLog('WLM010I', 'WORKLOAD MANAGER POLICY OPTIMIZED (-5% CPU LOAD).', 'info');
+                        }
+                      }}
+                      disabled={coolingLevel >= 8 || mips < coolingCost}
+                      className={`px-3 py-2 rounded font-bold border ${t.button} disabled:opacity-40 shrink-0`}
+                    >
+                      {coolingLevel >= 8 ? 'MAXED' : `${formatNumber(coolingCost)} MIPS`}
+                    </button>
+                  </div>
+
+                  {/* DASD 3390 Storage Volumes (Offline Cap & Spool Size) */}
+                  <div className="bg-[#080c11] border border-slate-800 p-3 rounded space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="font-bold text-sm text-[#ffb000]">
+                          DASD Volume Array: {currentDasd.name}
+                        </div>
+                        <div className="text-[11px] text-slate-400">
+                          Cylinders: <strong className="text-white">{currentDasd.cylinders.toLocaleString()}</strong> | Max Offline Storage:{' '}
+                          <strong className="text-[#00e5ff]">{(currentDasd.maxOfflineSec / 3600).toFixed(1)} Hours</strong>
+                        </div>
+                      </div>
+                      {nextDasd ? (
+                        <button
+                          onClick={() => {
+                            if (mips >= nextDasd.cost) {
+                              setMips((prev) => prev - nextDasd.cost);
+                              setDasdLevel((prev) => prev + 1);
+                              addLog(
+                                'ICK003I',
+                                `ICKDSF INITIALIZED NEW DASD VOLUME: ${nextDasd.name} (${nextDasd.cylinders} CYL)`,
+                                'highlight'
+                              );
+                            }
+                          }}
+                          disabled={mips < nextDasd.cost}
+                          className="px-3 py-2 rounded font-bold border border-[#ffb000]/60 text-[#ffb000] hover:bg-[#ffb000]/20 disabled:opacity-40 shrink-0"
+                        >
+                          Upgrade {nextDasd.name} ({formatNumber(nextDasd.cost)})
+                        </button>
+                      ) : (
+                        <span className="px-2 py-1 bg-[#33ff33]/20 text-[#33ff33] rounded font-bold">
+                          MAX MOD 54
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[10px] text-slate-400">
+                      Larger DASD 3390 volumes slow down JES2 Spool filling and prevent Abend x37 during long offline sessions.
+                    </div>
+                  </div>
+                </div>
+              </section>
+            );
+          })()}
+
+          {/* ----------------------------------------------------------------
+              WINDOW 6: [ASID 00FA] SYSVIEW MONITOR & IPL PRESTIGE
+          ---------------------------------------------------------------- */}
+          {windows.sysview.isOpen && (() => {
+            const t = getThemeClasses(windows.sysview.theme);
+            const maxBar = Math.max(10, ...mipsHistory);
+
+            return (
+              <section
+                className={`bg-[#0d131a] border-2 ${t.border} rounded flex flex-col h-[470px] shadow-2xl overflow-hidden`}
+              >
+                <div className="bg-[#121b24] border-b border-slate-800 px-3 py-1.5 flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className={`px-1.5 py-0.5 text-[10px] font-bold rounded ${t.badge}`}>
+                      ASID {windows.sysview.asid}
+                    </span>
+                    <span className={`font-bold ${t.text}`}>{windows.sysview.title}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => cycleWindowTheme('sysview')}
+                      className={`text-[10px] px-1.5 py-0.5 rounded border ${t.button}`}
+                    >
+                      COLOR
+                    </button>
+                    <button
+                      onClick={() => toggleWindow('sysview')}
+                      className="text-[10px] px-1.5 py-0.5 rounded bg-[#ff3333]/20 text-[#ff3333] border border-[#ff3333]/40"
+                    >
+                      CLOSE (-15% CPU)
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex-1 p-3 overflow-y-auto space-y-3 text-xs">
+                  {/* Live MIPS Throughput Histogram */}
+                  <div className="bg-[#080c11] border border-slate-800 p-2.5 rounded">
+                    <div className="flex justify-between items-center text-[11px] mb-2">
+                      <span className="font-bold text-slate-300">SYSVIEW REAL-TIME MIPS/SEC (20s)</span>
+                      <span className={t.text}>{formatNumber(productionStats.totalMipsPerSec)} MIPS/s</span>
+                    </div>
+                    <div className="h-20 flex items-end gap-1 pt-2 px-1 bg-black/50 rounded border border-slate-900">
+                      {mipsHistory.map((val, idx) => {
+                        const heightPct = Math.max(6, Math.round((val / maxBar) * 100));
+                        return (
+                          <div
+                            key={idx}
+                            className="flex-1 rounded-t transition-all duration-300"
+                            style={{
+                              height: `${heightPct}%`,
+                              backgroundColor: isThrashing ? '#ff3333' : t.hex,
+                              opacity: 0.35 + (idx / mipsHistory.length) * 0.65,
+                            }}
+                          />
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* SYSTEM IPL (INITIAL PROGRAM LOAD) PRESTIGE PANEL */}
+                  <div className="bg-[#080c11] border-2 border-[#ffb000]/50 p-3 rounded space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="font-extrabold text-sm text-[#ffb000] flex items-center gap-1.5">
+                        <RefreshCw className="w-4 h-4" />
+                        SYSTEM IPL (HARDWARE PRESTIGE)
+                      </span>
+                      <span className="text-[10px] px-2 py-0.5 bg-[#ffb000]/20 text-[#ffb000] rounded font-bold">
+                        Lifetime: {formatNumber(totalMipsEarned)} MIPS
+                      </span>
+                    </div>
+
+                    <p className="text-[11px] text-slate-300 leading-relaxed">
+                      Executing an <strong>Initial Program Load (IPL)</strong> resets current MIPS, JCL levels, and CICS regions, but upgrades your Mainframe generation, grants permanent <strong>Architecture Tokens (+25% MIPS each)</strong>, and installs <strong>+1 Permanent zIIP Engine</strong>!
+                    </p>
+
+                    <div className="bg-black/60 border border-slate-800 p-2 rounded space-y-1 text-[11px]">
+                      <div className="flex justify-between">
+                        <span className="text-slate-400">Architecture Tokens on IPL:</span>
+                        <span className="text-[#00e5ff] font-bold">+{pendingArchTokens} Tokens</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-400">Permanent zIIP Bonus:</span>
+                        <span className="text-[#33ff33] font-bold">+1 Free zIIP Engine</span>
+                      </div>
+                      {nextHwGen && (
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">Next Hardware Frame ({nextHwGen.name}):</span>
+                          <span className={canUpgradeHwOnIpl ? 'text-[#33ff33] font-bold' : 'text-slate-500'}>
+                            {canUpgradeHwOnIpl
+                              ? `READY! (x${nextHwGen.mult} Mult)`
+                              : `Requires ${formatNumber(nextHwGen.reqMips)} Lifetime MIPS`}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    <button
+                      onClick={() => setConfirmIplModal(true)}
+                      disabled={pendingArchTokens <= 0}
+                      className="w-full py-2 rounded font-extrabold text-xs bg-[#ffb000] hover:bg-[#ffc233] text-black disabled:opacity-30 disabled:cursor-not-allowed transition shadow-lg"
+                    >
+                      {pendingArchTokens > 0
+                        ? `EXECUTE SYSTEM IPL (+${pendingArchTokens} TOKENS & +1 zIIP)`
+                        : 'EARN 10,000 LIFETIME MIPS TO UNLOCK IPL'}
+                    </button>
+                  </div>
+                </div>
+              </section>
+            );
+          })()}
+        </div>
+      </main>
+
+      {/* ====================================================================
+          MODAL 1: 3270 TSO LOGON / BOOT SEQUENCE
+      ==================================================================== */}
+      {showBootModal && (
+        <div className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4">
+          <div className="bg-[#070a0e] border-2 border-[#33ff33] rounded max-w-xl w-full p-5 font-mono text-xs space-y-3 shadow-2xl">
+            <div className="flex justify-between items-center border-b border-[#33ff33]/30 pb-2">
+              <span className="text-[#33ff33] font-bold">
+                IBM 3270 INFORMATION DISPLAY SYSTEM - LPAR ZOS1
+              </span>
+              <span className="text-[10px] text-[#00e5ff]">{currentHw.name}</span>
+            </div>
+
+            <div className="space-y-1.5 min-h-[190px] text-[#33ff33]">
+              <div>&gt; CONNECTING TO VTAM SNA LU2 PORT 23...</div>
+              {bootStep >= 1 && <div>&gt; IEE114I HARDWARE FRAME: {currentHw.name} ONLINE</div>}
+              {bootStep >= 2 && (
+                <div>
+                  &gt; ENTER TSO/E USERID: <span className="text-white font-bold">ZADMIN01</span>
+                </div>
+              )}
+              {bootStep >= 3 && (
+                <div>
+                  &gt; PASSWORD: <span className="text-white">********</span> [RACF AUTHORIZED]
+                </div>
+              )}
+              {bootStep >= 4 && (
+                <div className="text-[#00e5ff]">
+                  &gt; $HASP000 JES2 SPOOL INITIALIZED ({ownedInitiators} INITIATORS, {ziipEngines} zIIP ENGINES)
+                </div>
+              )}
+              {bootStep >= 5 && (
+                <div className="text-[#ffb000]">
+                  &gt; TIP: Open SDSF &amp; JES2 windows in the taskbar, but watch your MAIN CPU %!
+                </div>
+              )}
+              {bootStep >= 6 && (
+                <div className="text-white font-bold animate-pulse">&gt; READY.</div>
+              )}
+            </div>
+
+            <div className="flex justify-end pt-2 border-t border-slate-800">
+              <button
+                onClick={() => setShowBootModal(false)}
+                className="px-4 py-2 bg-[#33ff33] hover:bg-[#4dff4d] text-black font-extrabold rounded text-xs transition"
+              >
+                {bootStep >= 6 ? 'ENTER TSO MASTER CONSOLE' : 'SKIP LOGON / CONNECT NOW'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ====================================================================
+          MODAL 2: IPL CONFIRMATION DIALOG (NO BROWSER CONFIRM())
+      ==================================================================== */}
+      {confirmIplModal && (
+        <div className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4">
+          <div className="bg-[#0d131a] border-2 border-[#ffb000] rounded max-w-md w-full p-5 space-y-4 text-xs">
+            <div className="text-sm font-extrabold text-[#ffb000] flex items-center gap-2">
+              <RefreshCw className="w-5 h-5" />
+              CONFIRM SYSTEM IPL (INITIAL PROGRAM LOAD)
+            </div>
+            <p className="text-slate-300 leading-relaxed">
+              Are you sure you want to initiate a System IPL? Current MIPS, JCL levels, and CICS regions will reset in exchange for:
+            </p>
+            <ul className="bg-black/60 border border-slate-800 p-3 rounded space-y-1 text-[#33ff33] font-bold">
+              <li>• +{pendingArchTokens} Permanent Architecture Tokens (+{pendingArchTokens * 25}% MIPS)</li>
+              <li>• +1 Permanent zIIP Offload Processor (0% CPU Upkeep)</li>
+              {canUpgradeHwOnIpl && (
+                <li className="text-[#00e5ff]">
+                  • Hardware Upgrade to {nextHwGen.name} (x{nextHwGen.mult} Base Multiplier!)
+                </li>
+              )}
+            </ul>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                onClick={() => setConfirmIplModal(false)}
+                className="px-3 py-1.5 rounded border border-slate-600 text-slate-300 hover:bg-slate-800"
+              >
+                CANCEL
+              </button>
+              <button
+                onClick={executeSystemIpl}
+                className="px-4 py-1.5 rounded bg-[#ffb000] text-black font-extrabold hover:bg-[#ffc233]"
+              >
+                EXECUTE IPL NOW
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ====================================================================
+          MODAL 3: OFFLINE DASD REPORT DIALOG
+      ==================================================================== */}
+      {offlineReport && (
+        <div className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4">
+          <div className="bg-[#0d131a] border-2 border-[#00e5ff] rounded max-w-md w-full p-5 space-y-3 text-xs">
+            <div className="text-sm font-extrabold text-[#00e5ff] flex items-center gap-2">
+              <HardDrive className="w-5 h-5" />
+              DASD OFFLINE BATCH SPOOL REPORT
+            </div>
+            <div className="space-y-1.5 text-slate-300">
+              <div>
+                Simulated Offline Time: <strong>{(offlineReport.requestedSec / 60).toFixed(0)} minutes</strong>
+              </div>
+              <div>
+                Active DASD Volume: <strong className="text-[#ffb000]">{offlineReport.dasdName}</strong>
+              </div>
+              {offlineReport.abend ? (
+                <div className="p-2 bg-[#ff3333]/20 border border-[#ff3333] text-[#ff3333] rounded font-bold">
+                  IEC030I ABEND B37-04: DASD Volume filled at {(offlineReport.cappedSec / 60).toFixed(0)} minutes! Upgrade to a larger 3390 Mod in the DASD window to store more offline progress.
+                </div>
+              ) : (
+                <div className="text-[#33ff33]">
+                  All offline batch datasets fitted cleanly inside {offlineReport.dasdName}.
+                </div>
+              )}
+              <div className="text-base font-extrabold text-[#33ff33] pt-1">
+                Recovered: +{formatNumber(offlineReport.earned)} MIPS
+              </div>
+            </div>
+            <div className="flex justify-end pt-2">
+              <button
+                onClick={() => setOfflineReport(null)}
+                className="px-4 py-1.5 rounded bg-[#00e5ff] text-black font-extrabold"
+              >
+                ACKNOWLEDGE
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ====================================================================
+          MODAL 4: HARD RESET CONFIRMATION
+      ==================================================================== */}
+      {confirmResetModal && (
+        <div className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4">
+          <div className="bg-[#0d131a] border-2 border-[#ff3333] rounded max-w-sm w-full p-5 space-y-4 text-xs">
+            <div className="text-sm font-extrabold text-[#ff3333] flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5" />
+              WIPE ALL MAINFRAME SAVE DATA?
+            </div>
+            <p className="text-slate-300">
+              This will permanently erase your localStorage save, including IPL prestige tokens and hardware generations.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setConfirmResetModal(false)}
+                className="px-3 py-1.5 rounded border border-slate-600 text-slate-300"
+              >
+                CANCEL
+              </button>
+              <button
+                onClick={handleHardReset}
+                className="px-4 py-1.5 rounded bg-[#ff3333] text-black font-extrabold"
+              >
+                FORMAT SYSTEM (RESET)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

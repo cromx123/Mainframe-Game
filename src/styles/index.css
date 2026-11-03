@@ -1,0 +1,51 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'Cascadia Mono', 'Courier New', monospace;
+
+  /* 3270 phosphors & alert colors */
+  --color-term-green: #33ff33;
+  --color-term-cyan: #00e5ff;
+  --color-term-amber: #ffb000;
+  --color-term-red: #ff3333;
+  --color-term-yellow: #ffea00;
+
+  /* Surfaces, darkest to lightest */
+  --color-panel-deep: #06090d;
+  --color-crt: #070a0e;
+  --color-panel-inset: #080c11;
+  --color-taskbar: #090d13;
+  --color-chrome: #0b1017;
+  --color-panel: #0d131a;
+  --color-panel-head: #121b24;
+  --color-control: #131d28;
+  --color-control-hover: #1c2b3b;
+  --color-edge: #1e2d3d;
+  --color-rack: #111923;
+  --color-rack-edge: #2e445c;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--color-crt);
+  color-scheme: dark;
+}
+
+@keyframes led-blink {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0.25;
+  }
+}
+
+.crt-scanlines {
+  background:
+    linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.45) 50%),
+    linear-gradient(90deg, rgba(255, 0, 0, 0.03), rgba(0, 255, 0, 0.01), rgba(0, 0, 255, 0.03));
+  background-size:
+    100% 3px,
+    6px 100%;
+}
